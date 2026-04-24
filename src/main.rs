@@ -10,23 +10,43 @@ const GRAVITY: f32 = 0.2;
 #[derive(Clone, Copy)]
 struct Cell {
     filled: bool,
+    color: u16,
 }
 
 struct SandSim {
     grid: [[Cell; WIDTH]; HEIGHT],
     velocity: [[f32; WIDTH]; HEIGHT],
+    hue: u8,
 }
 
 impl SandSim {
     fn new() -> Self {
         Self {
-            grid: [[Cell { filled: false }; WIDTH]; HEIGHT],
+            grid: [[Cell {
+                filled: false,
+                color: FG_BLACK,
+            }; WIDTH]; HEIGHT],
             velocity: [[0.0; WIDTH]; HEIGHT],
+            hue: 0,
+        }
+    }
+
+    fn next_color(&self) -> u16 {
+        match self.hue {
+            0..=50 => FG_RED,
+            51..=100 => FG_YELLOW,
+            101..=150 => FG_GREEN,
+            151..=200 => FG_CYAN,
+            201..=230 => FG_BLUE,
+            _ => FG_MAGENTA,
         }
     }
 
     fn update_simulation(&mut self) {
-        let mut next_grid = [[Cell { filled: false }; WIDTH]; HEIGHT];
+        let mut next_grid = [[Cell {
+            filled: false,
+            color: FG_BLACK,
+        }; WIDTH]; HEIGHT];
         let mut next_velocity = [[0.0; WIDTH]; HEIGHT];
 
         for x in 0..WIDTH {
@@ -55,17 +75,17 @@ impl SandSim {
                         };
 
                         if !below {
-                            next_grid[ty as usize][x].filled = true;
+                            next_grid[ty as usize][x] = self.grid[y][x];
                             next_velocity[ty as usize][x] = vel + GRAVITY;
                             moved = true;
                             break;
                         } else if dir == -1 && !below_left {
-                            next_grid[ty as usize][x - 1].filled = true;
+                            next_grid[ty as usize][x - 1] = self.grid[y][x];
                             next_velocity[ty as usize][x - 1] = vel + GRAVITY;
                             moved = true;
                             break;
                         } else if dir == 1 && !below_right {
-                            next_grid[ty as usize][x + 1].filled = true;
+                            next_grid[ty as usize][x + 1] = self.grid[y][x];
                             next_velocity[ty as usize][x + 1] = vel + GRAVITY;
                             moved = true;
                             break;
@@ -99,6 +119,7 @@ impl SandSim {
 
                     if engine.mouse_held(LEFT) && rand::random::<f32>() < 0.75 {
                         self.grid[y][x].filled = true;
+                        self.grid[y][x].color = self.next_color();
                         self.velocity[y][x] = 1.0;
                     }
 
@@ -109,13 +130,15 @@ impl SandSim {
                 }
             }
         }
+
+        self.hue = self.hue.wrapping_add(1);
     }
 
     fn draw(&self, engine: &mut ConsoleGameEngine<Self>) {
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
                 if self.grid[y][x].filled {
-                    engine.draw_with(x as i32, y as i32, SOLID, FG_YELLOW);
+                    engine.draw_with(x as i32, y as i32, SOLID, self.grid[y][x].color);
                 }
             }
         }
