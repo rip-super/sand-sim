@@ -1,36 +1,46 @@
+use rand::RngExt;
+use rand::rngs::SmallRng;
 use rusty_console_game_engine::{color::*, prelude::*};
 
-const WIDTH: usize = 120;
-const HEIGHT: usize = 80;
+const WIDTH: usize = 300;
+const HEIGHT: usize = 200;
 const BRUSH_SIZE: i32 = 3;
-
 const GRAVITY: f32 = 0.2;
 const TICK_RATE: f32 = 1.0 / 60.0;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Cell {
     filled: bool,
     color: u16,
+    vel: f32,
 }
 
 struct SandSim {
-    grid: [[Cell; WIDTH]; HEIGHT],
-    velocity: [[f32; WIDTH]; HEIGHT],
+    grid: Box<[Cell; WIDTH * HEIGHT]>,
     hue: f32,
     accumulator: f32,
+    rng: SmallRng,
 }
 
 impl SandSim {
     fn new() -> Self {
         Self {
-            grid: [[Cell {
-                filled: false,
-                color: FG_BLACK,
-            }; WIDTH]; HEIGHT],
-            velocity: [[0.0; WIDTH]; HEIGHT],
+            grid: Box::new(
+                [Cell {
+                    filled: false,
+                    color: FG_BLACK,
+                    vel: 0.0,
+                }; WIDTH * HEIGHT],
+            ),
             hue: 0.0,
             accumulator: 0.0,
+            rng: rand::make_rng(),
         }
+    }
+
+    #[inline(always)]
+    fn get_idx(x: usize, y: usize) -> usize {
+        y * WIDTH + x
     }
 
     fn next_color(&self) -> u16 {
@@ -45,101 +55,118 @@ impl SandSim {
     }
 
     fn update_simulation(&mut self) {
-        let mut next_grid = [[Cell {
-            filled: false,
-            color: FG_BLACK,
-        }; WIDTH]; HEIGHT];
-        let mut next_velocity = [[0.0; WIDTH]; HEIGHT];
+        for y in (0..HEIGHT - 1).rev() {
+            for x in 0..WIDTH {
+                let idx = Self::get_idx(x, y);
+                let cell = self.grid[idx];
 
-        for x in 0..WIDTH {
-            for y in 0..HEIGHT {
-                if self.grid[y][x].filled {
-                    let vel = self.velocity[y][x];
-                    let new_y = (y as f32 + vel) as i32;
+                if cell.filled {
+                    let vel = cell.vel;
+                    let new_y = (y as f32 + vel).min((HEIGHT - 1) as f32) as usize;
+
+                    if new_y <= y {
+                        self.grid[idx].vel += GRAVITY;
+                        continue;
+                    }
 
                     let mut moved = false;
 
-                    for ty in ((y as i32 + 1)..=new_y.min((HEIGHT - 1) as i32)).rev() {
-                        let dir = if rand::random::<bool>() { -1 } else { 1 };
-                        let below = self.grid[ty as usize][x].filled;
-                        let below_left = if x > 0 {
-                            self.grid[ty as usize][x - 1].filled
-                        } else {
-                            true
-                        };
-                        let below_right = if x < WIDTH - 1 {
-                            self.grid[ty as usize][x + 1].filled
-                        } else {
-                            true
-                        };
+                    for ty in (y + 1..=new_y).rev() {
+                        let target_idx = Self::get_idx(x, ty);
 
-                        if !below {
-                            next_grid[ty as usize][x] = self.grid[y][x];
-                            next_velocity[ty as usize][x] = vel + GRAVITY;
+                        if !self.grid[target_idx].filled {
+                            self.grid[target_idx] = Cell {
+                                filled: true,
+                                color: cell.color,
+                                vel: vel + GRAVITY,
+                            };
+                            self.grid[idx] = Cell {
+                                filled: false,
+                                color: FG_BLACK,
+                                vel: 0.0,
+                            };
                             moved = true;
                             break;
-                        } else if dir == -1 && !below_left {
-                            next_grid[ty as usize][x - 1] = self.grid[y][x];
-                            next_velocity[ty as usize][x - 1] = vel + GRAVITY;
-                            moved = true;
-                            break;
-                        } else if dir == 1 && !below_right {
-                            next_grid[ty as usize][x + 1] = self.grid[y][x];
-                            next_velocity[ty as usize][x + 1] = vel + GRAVITY;
-                            moved = true;
+                        }
+
+                        let dir = if self.rng.random_bool(0.5) {
+                            -1i32
+                        } else {
+                            1i32
+                        };
+                        let dxs = [dir, -dir];
+
+                        for &dx in dxs.iter() {
+                            let nx = x as i32 + dx;
+                            if nx >= 0 && nx < WIDTH as i32 {
+                                let diag_idx = Self::get_idx(nx as usize, ty);
+                                if !self.grid[diag_idx].filled {
+                                    self.grid[diag_idx] = Cell {
+                                        filled: true,
+                                        color: cell.color,
+                                        vel: vel + GRAVITY,
+                                    };
+                                    self.grid[idx] = Cell {
+                                        filled: false,
+                                        color: FG_BLACK,
+                                        vel: 0.0,
+                                    };
+                                    moved = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if moved {
                             break;
                         }
                     }
 
                     if !moved {
-                        next_grid[y][x] = self.grid[y][x];
-                        next_velocity[y][x] = vel + GRAVITY;
+                        self.grid[idx].vel += GRAVITY;
                     }
                 }
             }
         }
-        self.grid = next_grid;
-        self.velocity = next_velocity;
     }
 
     fn handle_input(&mut self, engine: &mut ConsoleGameEngine<Self>, dt: f32) {
         let mx = engine.mouse_x();
         let my = engine.mouse_y();
 
-        for dy in -BRUSH_SIZE..=BRUSH_SIZE {
-            for dx in -BRUSH_SIZE..=BRUSH_SIZE {
-                let nx = mx + dx;
-                let ny = my + dy;
+        if engine.mouse_held(LEFT) || engine.mouse_held(RIGHT) {
+            for dy in -BRUSH_SIZE..=BRUSH_SIZE {
+                for dx in -BRUSH_SIZE..=BRUSH_SIZE {
+                    let nx = mx + dx;
+                    let ny = my + dy;
 
-                if nx >= 0 && nx < WIDTH as i32 && ny >= 0 && ny < HEIGHT as i32 {
-                    let x = nx as usize;
-                    let y = ny as usize;
+                    if nx >= 0 && nx < WIDTH as i32 && ny >= 0 && ny < HEIGHT as i32 {
+                        let idx = Self::get_idx(nx as usize, ny as usize);
 
-                    if engine.mouse_held(LEFT) && rand::random::<f32>() < 0.75 {
-                        self.grid[y][x].filled = true;
-                        self.grid[y][x].color = self.next_color();
-                        self.velocity[y][x] = 1.0;
-                    }
-
-                    if engine.mouse_held(RIGHT) {
-                        self.grid[y][x].filled = false;
-                        self.velocity[y][x] = 0.0;
+                        if engine.mouse_held(LEFT) && self.rng.random_bool(0.75) {
+                            if !self.grid[idx].filled {
+                                self.grid[idx] = Cell {
+                                    filled: true,
+                                    color: self.next_color(),
+                                    vel: 1.0,
+                                };
+                            }
+                        } else if engine.mouse_held(RIGHT) {
+                            self.grid[idx].filled = false;
+                        }
                     }
                 }
             }
         }
 
-        self.hue += 60.0 * dt;
-        if self.hue >= 255.0 {
-            self.hue = 0.0;
-        }
+        self.hue = (self.hue + 60.0 * dt) % 255.0;
     }
 
     fn draw(&self, engine: &mut ConsoleGameEngine<Self>) {
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
-                if self.grid[y][x].filled {
-                    engine.draw_with(x as i32, y as i32, SOLID, self.grid[y][x].color);
+                let cell = self.grid[Self::get_idx(x, y)];
+                if cell.filled {
+                    engine.draw_with(x as i32, y as i32, SOLID, cell.color);
                 }
             }
         }
@@ -157,18 +184,15 @@ impl ConsoleGame for SandSim {
 
     fn update(&mut self, engine: &mut ConsoleGameEngine<Self>, dt: f32) -> bool {
         engine.clear(FG_BLACK);
-
         self.handle_input(engine, dt);
 
         self.accumulator += dt;
-
         while self.accumulator >= TICK_RATE {
             self.update_simulation();
             self.accumulator -= TICK_RATE;
         }
 
         self.draw(engine);
-
         true
     }
 }
@@ -176,7 +200,7 @@ impl ConsoleGame for SandSim {
 fn main() {
     let mut engine = ConsoleGameEngine::new(SandSim::new());
     engine
-        .construct_console(WIDTH as i16, HEIGHT as i16, 6, 6)
+        .construct_console(WIDTH as i16, HEIGHT as i16, 4, 4)
         .unwrap();
     engine.start();
 }
