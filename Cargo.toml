@@ -1,0 +1,8 @@
+[package]
+name = "sand-sim"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rand = "0.10.1"
+rusty_console_game_engine = "0.4.1"
