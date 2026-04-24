@@ -1,11 +1,11 @@
 use rusty_console_game_engine::{color::*, prelude::*};
-use std::{thread, time::Duration};
 
 const WIDTH: usize = 120;
 const HEIGHT: usize = 80;
 const BRUSH_SIZE: i32 = 3;
 
 const GRAVITY: f32 = 0.2;
+const TICK_RATE: f32 = 1.0 / 60.0;
 
 #[derive(Clone, Copy)]
 struct Cell {
@@ -16,7 +16,8 @@ struct Cell {
 struct SandSim {
     grid: [[Cell; WIDTH]; HEIGHT],
     velocity: [[f32; WIDTH]; HEIGHT],
-    hue: u8,
+    hue: f32,
+    accumulator: f32,
 }
 
 impl SandSim {
@@ -27,12 +28,13 @@ impl SandSim {
                 color: FG_BLACK,
             }; WIDTH]; HEIGHT],
             velocity: [[0.0; WIDTH]; HEIGHT],
-            hue: 0,
+            hue: 0.0,
+            accumulator: 0.0,
         }
     }
 
     fn next_color(&self) -> u16 {
-        match self.hue {
+        match self.hue as u8 {
             0..=50 => FG_RED,
             51..=100 => FG_YELLOW,
             101..=150 => FG_GREEN,
@@ -59,15 +61,12 @@ impl SandSim {
 
                     for ty in ((y as i32 + 1)..=new_y.min((HEIGHT - 1) as i32)).rev() {
                         let dir = if rand::random::<bool>() { -1 } else { 1 };
-
                         let below = self.grid[ty as usize][x].filled;
-
                         let below_left = if x > 0 {
                             self.grid[ty as usize][x - 1].filled
                         } else {
                             true
                         };
-
                         let below_right = if x < WIDTH - 1 {
                             self.grid[ty as usize][x + 1].filled
                         } else {
@@ -99,12 +98,11 @@ impl SandSim {
                 }
             }
         }
-
         self.grid = next_grid;
         self.velocity = next_velocity;
     }
 
-    fn handle_input(&mut self, engine: &mut ConsoleGameEngine<Self>) {
+    fn handle_input(&mut self, engine: &mut ConsoleGameEngine<Self>, dt: f32) {
         let mx = engine.mouse_x();
         let my = engine.mouse_y();
 
@@ -131,7 +129,10 @@ impl SandSim {
             }
         }
 
-        self.hue = self.hue.wrapping_add(1);
+        self.hue += 60.0 * dt;
+        if self.hue >= 255.0 {
+            self.hue = 0.0;
+        }
     }
 
     fn draw(&self, engine: &mut ConsoleGameEngine<Self>) {
@@ -154,14 +155,19 @@ impl ConsoleGame for SandSim {
         true
     }
 
-    fn update(&mut self, engine: &mut ConsoleGameEngine<Self>, _dt: f32) -> bool {
+    fn update(&mut self, engine: &mut ConsoleGameEngine<Self>, dt: f32) -> bool {
         engine.clear(FG_BLACK);
 
-        self.handle_input(engine);
-        self.update_simulation();
-        self.draw(engine);
+        self.handle_input(engine, dt);
 
-        thread::sleep(Duration::from_millis(16));
+        self.accumulator += dt;
+
+        while self.accumulator >= TICK_RATE {
+            self.update_simulation();
+            self.accumulator -= TICK_RATE;
+        }
+
+        self.draw(engine);
 
         true
     }
@@ -169,10 +175,8 @@ impl ConsoleGame for SandSim {
 
 fn main() {
     let mut engine = ConsoleGameEngine::new(SandSim::new());
-
     engine
         .construct_console(WIDTH as i16, HEIGHT as i16, 6, 6)
         .unwrap();
-
     engine.start();
 }
