@@ -8,8 +8,16 @@ const GRAVITY: f32 = 0.1;
 const TICK_RATE: f32 = 1.0 / 60.0;
 
 #[derive(Clone, Copy, PartialEq)]
+enum Material {
+    Sand,
+    Water,
+    Stone,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 struct Cell {
     filled: bool,
+    mat: Material,
     color: u16,
     vel: f32,
 }
@@ -18,6 +26,7 @@ impl Default for Cell {
     fn default() -> Self {
         Self {
             filled: false,
+            mat: Material::Sand,
             color: FG_BLACK,
             vel: 0.0,
         }
@@ -26,7 +35,9 @@ impl Default for Cell {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tool {
-    Place,
+    Sand,
+    Water,
+    Stone,
     Delete,
 }
 
@@ -48,7 +59,7 @@ impl SandSim {
             hue: 0.0,
             accumulator: 0.0,
             rng: rand::make_rng(),
-            tool: Tool::Place,
+            tool: Tool::Sand,
             brush_size: 3,
         }
     }
@@ -63,8 +74,7 @@ impl SandSim {
             0..=50 => FG_RED,
             51..=100 => FG_YELLOW,
             101..=150 => FG_GREEN,
-            151..=200 => FG_CYAN,
-            201..=230 => FG_BLUE,
+            151..=200 => FG_BLUE,
             _ => FG_MAGENTA,
         }
     }
@@ -90,6 +100,11 @@ impl SandSim {
                     continue;
                 }
 
+                if cell.mat == Material::Stone {
+                    self.next_grid[idx] = cell;
+                    continue;
+                }
+
                 let mut new_vel = (cell.vel + GRAVITY).min(terminal_velocity);
                 let mut cur_x = x as i32;
                 let mut cur_y = y as i32;
@@ -104,7 +119,12 @@ impl SandSim {
                     }
 
                     let down_idx = Self::get_idx(cur_x as usize, next_y as usize);
-                    if !self.next_grid[down_idx].filled {
+
+                    let cell_below = self.grid[down_idx];
+                    let can_displace =
+                        cell.mat == Material::Sand && cell_below.mat == Material::Water;
+
+                    if !self.next_grid[down_idx].filled || can_displace {
                         cur_y = next_y;
                         moved = true;
                     } else {
@@ -115,7 +135,11 @@ impl SandSim {
                             let nx = cur_x + dx;
                             if nx >= 0 && nx < WIDTH as i32 {
                                 let diag_idx = Self::get_idx(nx as usize, next_y as usize);
-                                if !self.next_grid[diag_idx].filled {
+                                let diag_below = self.grid[diag_idx];
+                                let can_displace_diag =
+                                    cell.mat == Material::Sand && diag_below.mat == Material::Water;
+
+                                if !self.next_grid[diag_idx].filled || can_displace_diag {
                                     cur_x = nx;
                                     cur_y = next_y;
                                     moved = true;
@@ -126,6 +150,22 @@ impl SandSim {
                         }
 
                         if !found_diagonal {
+                            if cell.mat == Material::Water {
+                                let flow_dir = if self.rng.random_bool(0.5) { 1 } else { -1 };
+                                for &fdx in &[flow_dir, -flow_dir] {
+                                    let fx = cur_x + fdx;
+                                    if fx >= 0 && fx < WIDTH as i32 {
+                                        let side_idx = Self::get_idx(fx as usize, cur_y as usize);
+                                        if !self.grid[side_idx].filled
+                                            && !self.next_grid[side_idx].filled
+                                        {
+                                            cur_x = fx;
+                                            moved = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                             new_vel = 0.0;
                             break;
                         }
@@ -133,11 +173,19 @@ impl SandSim {
                 }
 
                 let final_idx = Self::get_idx(cur_x as usize, cur_y as usize);
-                self.next_grid[final_idx] = Cell {
-                    filled: true,
-                    color: cell.color,
-                    vel: if moved { new_vel } else { 0.0 },
-                };
+
+                if self.next_grid[final_idx].filled
+                    && self.next_grid[final_idx].mat != Material::Water
+                {
+                    self.next_grid[idx] = cell;
+                } else {
+                    self.next_grid[final_idx] = Cell {
+                        filled: true,
+                        mat: cell.mat,
+                        color: cell.color,
+                        vel: if moved { new_vel } else { 0.0 },
+                    };
+                }
             }
         }
 
@@ -146,9 +194,15 @@ impl SandSim {
 
     fn handle_input(&mut self, engine: &mut ConsoleGameEngine<Self>, dt: f32) {
         if engine.key_pressed(ONE) {
-            self.tool = Tool::Place;
+            self.tool = Tool::Sand;
         }
         if engine.key_pressed(TWO) {
+            self.tool = Tool::Water;
+        }
+        if engine.key_pressed(THREE) {
+            self.tool = Tool::Stone;
+        }
+        if engine.key_pressed(FOUR) {
             self.tool = Tool::Delete;
         }
 
@@ -172,20 +226,39 @@ impl SandSim {
                     if dx * dx + dy * dy > self.brush_size * self.brush_size {
                         continue;
                     }
-
                     let nx = mx + dx;
                     let ny = my + dy;
 
                     if nx >= 0 && nx < WIDTH as i32 && ny >= 0 && ny < HEIGHT as i32 {
                         let idx = Self::get_idx(nx as usize, ny as usize);
-
                         match self.tool {
-                            Tool::Place => {
+                            Tool::Sand => {
                                 if self.rng.random_bool(0.75) && !self.grid[idx].filled {
                                     self.grid[idx] = Cell {
                                         filled: true,
+                                        mat: Material::Sand,
                                         color: self.next_color(),
                                         vel: 1.0,
+                                    };
+                                }
+                            }
+                            Tool::Water => {
+                                if self.rng.random_bool(0.85) && !self.grid[idx].filled {
+                                    self.grid[idx] = Cell {
+                                        filled: true,
+                                        mat: Material::Water,
+                                        color: FG_CYAN,
+                                        vel: 1.0,
+                                    };
+                                }
+                            }
+                            Tool::Stone => {
+                                if !self.grid[idx].filled {
+                                    self.grid[idx] = Cell {
+                                        filled: true,
+                                        mat: Material::Stone,
+                                        color: FG_DARK_GREY,
+                                        vel: 0.0,
                                     };
                                 }
                             }
@@ -197,7 +270,7 @@ impl SandSim {
                 }
             }
 
-            if self.tool == Tool::Place {
+            if self.tool == Tool::Sand {
                 self.hue = (self.hue + 60.0 * dt) % 255.0;
             }
         }
@@ -208,7 +281,9 @@ impl SandSim {
         let my = engine.mouse_y();
 
         let color = match self.tool {
-            Tool::Place => FG_WHITE,
+            Tool::Sand => FG_WHITE,
+            Tool::Water => FG_CYAN,
+            Tool::Stone => FG_GREY,
             Tool::Delete => FG_RED,
         };
 
@@ -304,7 +379,6 @@ impl ConsoleGame for SandSim {
 
     fn update(&mut self, engine: &mut ConsoleGameEngine<Self>, dt: f32) -> bool {
         engine.clear(FG_BLACK);
-
         self.handle_input(engine, dt);
 
         self.accumulator += dt;
@@ -323,23 +397,40 @@ impl ConsoleGame for SandSim {
         }
 
         let mode_str = match self.tool {
-            Tool::Place => "PLACE SAND",
+            Tool::Sand => "SAND",
+            Tool::Water => "WATER",
+            Tool::Stone => "STONE",
             Tool::Delete => "DELETE",
         };
 
-        self.draw_pixel_string(engine, 5, 5, &format!("MODE: {}", mode_str), FG_WHITE);
+        for by in 0..25 {
+            for bx in 0..WIDTH as i32 {
+                engine.draw_with(bx, by, SOLID, FG_BLACK);
+            }
+        }
+
+        self.draw_pixel_string(engine, 5, 5, &format!("TOOL: {}", mode_str), FG_WHITE);
         self.draw_pixel_string(
             engine,
             5,
-            15,
-            &format!("BRUSH SIZE: {}", self.brush_size),
+            14,
+            &format!("SIZE: {}", self.brush_size),
             FG_WHITE,
         );
 
-        self.draw_pixel_string(engine, 5, 30, "1 - PLACE SAND", FG_GREY);
-        self.draw_pixel_string(engine, 5, 40, "2 - DELETE", FG_GREY);
-        self.draw_pixel_string(engine, 5, 50, "C - CLEAR ALL", FG_GREY);
-        self.draw_pixel_string(engine, 5, 60, "UP/DOWN - BRUSH SIZE", FG_GREY);
+        let help_x = 125;
+        self.draw_pixel_string(
+            engine,
+            help_x,
+            5,
+            "1:SAND 2:WATER 3:STONE 4:DELETE",
+            FG_GREY,
+        );
+        self.draw_pixel_string(engine, help_x, 14, "ARROWS:SIZE  C:CLEAR ALL", FG_GREY);
+
+        for lx in 0..WIDTH as i32 {
+            engine.draw_with(lx, 25, SOLID, FG_DARK_GREY);
+        }
 
         self.draw_cursor(engine);
 
@@ -349,10 +440,8 @@ impl ConsoleGame for SandSim {
 
 fn main() {
     let mut engine = ConsoleGameEngine::new(SandSim::new());
-
     engine
         .construct_console(WIDTH as i16, HEIGHT as i16, 4, 4)
         .unwrap();
-
     engine.start();
 }
