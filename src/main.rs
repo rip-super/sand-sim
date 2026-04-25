@@ -4,7 +4,6 @@ use rusty_console_game_engine::{color::*, key::*, prelude::*};
 
 const WIDTH: usize = 300;
 const HEIGHT: usize = 200;
-const BRUSH_SIZE: i32 = 3;
 const GRAVITY: f32 = 0.1;
 const TICK_RATE: f32 = 1.0 / 60.0;
 
@@ -38,6 +37,7 @@ struct SandSim {
     accumulator: f32,
     rng: SmallRng,
     tool: Tool,
+    brush_size: i32,
 }
 
 impl SandSim {
@@ -49,6 +49,7 @@ impl SandSim {
             accumulator: 0.0,
             rng: rand::make_rng(),
             tool: Tool::Place,
+            brush_size: 3,
         }
     }
 
@@ -151,13 +152,24 @@ impl SandSim {
             self.tool = Tool::Delete;
         }
 
+        if engine.key_pressed(C) {
+            self.grid.fill(Cell::default());
+        }
+
+        if engine.key_pressed(ARROW_UP) {
+            self.brush_size = (self.brush_size + 1).min(20);
+        }
+        if engine.key_pressed(ARROW_DOWN) {
+            self.brush_size = (self.brush_size - 1).max(1);
+        }
+
         let mx = engine.mouse_x();
         let my = engine.mouse_y();
 
         if engine.mouse_held(LEFT) {
-            for dy in -BRUSH_SIZE..=BRUSH_SIZE {
-                for dx in -BRUSH_SIZE..=BRUSH_SIZE {
-                    if dx * dx + dy * dy > BRUSH_SIZE * BRUSH_SIZE {
+            for dy in -self.brush_size..=self.brush_size {
+                for dx in -self.brush_size..=self.brush_size {
+                    if dx * dx + dy * dy > self.brush_size * self.brush_size {
                         continue;
                     }
 
@@ -200,8 +212,8 @@ impl SandSim {
             Tool::Delete => FG_RED,
         };
 
-        engine.draw_circle_with(mx, my, BRUSH_SIZE + 1, SOLID, FG_DARK_GREY);
-        engine.draw_circle_with(mx, my, BRUSH_SIZE, SOLID, color);
+        engine.draw_circle_with(mx, my, self.brush_size + 1, SOLID, FG_DARK_GREY);
+        engine.draw_circle_with(mx, my, self.brush_size, SOLID, color);
     }
 
     fn draw_pixel_char(
@@ -251,6 +263,7 @@ impl SandSim {
             '0' => [0x6, 0x9, 0x9, 0x9, 0x6],
             '-' => [0x0, 0x0, 0xF, 0x0, 0x0],
             ':' => [0x0, 0x6, 0x0, 0x6, 0x0],
+            '/' => [0x1, 0x2, 0x4, 0x4, 0x8],
             ' ' => [0x0, 0x0, 0x0, 0x0, 0x0],
             _ => [0xF, 0xF, 0xF, 0xF, 0xF],
         };
@@ -315,8 +328,18 @@ impl ConsoleGame for SandSim {
         };
 
         self.draw_pixel_string(engine, 5, 5, &format!("MODE: {}", mode_str), FG_WHITE);
-        self.draw_pixel_string(engine, 5, 15, "1 - PLACE SAND", FG_GREY);
-        self.draw_pixel_string(engine, 5, 25, "2 - DELETE", FG_GREY);
+        self.draw_pixel_string(
+            engine,
+            5,
+            15,
+            &format!("BRUSH SIZE: {}", self.brush_size),
+            FG_WHITE,
+        );
+
+        self.draw_pixel_string(engine, 5, 30, "1 - PLACE SAND", FG_GREY);
+        self.draw_pixel_string(engine, 5, 40, "2 - DELETE", FG_GREY);
+        self.draw_pixel_string(engine, 5, 50, "C - CLEAR ALL", FG_GREY);
+        self.draw_pixel_string(engine, 5, 60, "UP/DOWN - BRUSH SIZE", FG_GREY);
 
         self.draw_cursor(engine);
 
