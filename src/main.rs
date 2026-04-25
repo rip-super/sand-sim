@@ -74,65 +74,69 @@ impl SandSim {
         }
 
         let left_to_right = self.rng.random_bool(0.5);
+        let terminal_velocity = 8.0;
 
         for y in (0..HEIGHT).rev() {
-            let xs: Vec<usize> = if left_to_right {
-                (0..WIDTH).collect()
-            } else {
-                (0..WIDTH).rev().collect()
-            };
+            let mut xs: Vec<usize> = (0..WIDTH).collect();
+            if !left_to_right {
+                xs.reverse();
+            }
 
             for x in xs {
                 let idx = Self::get_idx(x, y);
                 let cell = self.grid[idx];
-
                 if !cell.filled {
                     continue;
                 }
 
+                let mut new_vel = (cell.vel + GRAVITY).min(terminal_velocity);
+                let mut cur_x = x as i32;
+                let mut cur_y = y as i32;
+                let move_dist = new_vel.floor() as i32;
                 let mut moved = false;
-                let below_y = y + 1;
 
-                if below_y < HEIGHT {
-                    let below_idx = Self::get_idx(x, below_y);
-
-                    if !self.next_grid[below_idx].filled {
-                        self.next_grid[below_idx] = Cell {
-                            filled: true,
-                            color: cell.color,
-                            vel: cell.vel + GRAVITY,
-                        };
-                        moved = true;
+                for _ in 0..move_dist.max(1) {
+                    let next_y = cur_y + 1;
+                    if next_y >= HEIGHT as i32 {
+                        new_vel = 0.0;
+                        break;
                     }
 
-                    if !moved {
+                    let down_idx = Self::get_idx(cur_x as usize, next_y as usize);
+                    if !self.next_grid[down_idx].filled {
+                        cur_y = next_y;
+                        moved = true;
+                    } else {
                         let dir = if self.rng.random_bool(0.5) { 1 } else { -1 };
-                        for &dx in &[dir, -dir] {
-                            let nx = x as i32 + dx;
-                            if nx >= 0 && nx < WIDTH as i32 {
-                                let diag_idx = Self::get_idx(nx as usize, below_y);
+                        let mut found_diagonal = false;
 
+                        for &dx in &[dir, -dir] {
+                            let nx = cur_x + dx;
+                            if nx >= 0 && nx < WIDTH as i32 {
+                                let diag_idx = Self::get_idx(nx as usize, next_y as usize);
                                 if !self.next_grid[diag_idx].filled {
-                                    self.next_grid[diag_idx] = Cell {
-                                        filled: true,
-                                        color: cell.color,
-                                        vel: cell.vel + GRAVITY,
-                                    };
+                                    cur_x = nx;
+                                    cur_y = next_y;
                                     moved = true;
+                                    found_diagonal = true;
                                     break;
                                 }
                             }
                         }
+
+                        if !found_diagonal {
+                            new_vel = 0.0;
+                            break;
+                        }
                     }
                 }
 
-                if !moved {
-                    self.next_grid[idx] = Cell {
-                        filled: true,
-                        color: cell.color,
-                        vel: cell.vel + GRAVITY,
-                    };
-                }
+                let final_idx = Self::get_idx(cur_x as usize, cur_y as usize);
+                self.next_grid[final_idx] = Cell {
+                    filled: true,
+                    color: cell.color,
+                    vel: if moved { new_vel } else { 0.0 },
+                };
             }
         }
 
